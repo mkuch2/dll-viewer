@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import psutil
+import sys
+import subprocess
+import time
+
+
+def get_process(pid: int) -> psutil.Process:
+  return psutil.Process(pid)
+
+def main():
+
+  parser = argparse.ArgumentParser()
+
+  parser.add_argument("pid", help="pid of process to inspect", type=int)
+
+  args = parser.parse_args()
+
+  pid = args.pid
+
+  if not psutil.pid_exists(pid):
+    sys.exit("PID {pid} does not exist")
+
+  process = get_process(pid)
+
+  p_info = list(process.as_dict().values())
+
+  print(p_info)
+
+
+if __name__ == "__main__":
+  main()
+    
+
