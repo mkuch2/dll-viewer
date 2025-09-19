@@ -21,13 +21,16 @@ def main():
   pid = args.pid
 
   if not psutil.pid_exists(pid):
-    sys.exit("PID {pid} does not exist")
+    sys.exit(f"PID {pid} does not exist")
 
-  process = get_process(pid)
+  # Get process from PID
+  process = psutil.Process(pid)
 
-  p_info = list(process.as_dict().values())
+  # Get process's memory maps
+  memory_maps = process.memory_maps()
 
-  print(p_info)
+  print(memory_maps)
+
 
 
 if __name__ == "__main__":
