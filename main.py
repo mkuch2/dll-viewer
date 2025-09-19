@@ -5,6 +5,7 @@ import psutil
 import sys
 import subprocess
 import time
+import re
 
 
 def get_process(pid: int) -> psutil.Process:
@@ -27,9 +28,14 @@ def main():
   process = psutil.Process(pid)
 
   # Get process's memory maps
-  memory_maps = process.memory_maps()
+  memory_maps = str(process.memory_maps())
 
-  print(memory_maps)
+  dll_files = re.findall(r"\'(.*?\.dll)\'", memory_maps)
+
+  # Get filename without path
+  dll_filenames = [name.split('\\')[-1] for name in dll_files]
+
+  print(dll_filenames)
 
 
 
