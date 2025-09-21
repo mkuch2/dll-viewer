@@ -30,21 +30,13 @@ def get_file_hash(file_path, algorithm='sha256', chunk_size=8192):
             hasher.update(chunk)
     return hasher.hexdigest()
 
-def main():
+def get_process_info(process: psutil.Process):
+  p_attr = process.as_dict(attrs=['name', 'username', 'exe', 'cmdline', 'create_time'])
 
-  parser = argparse.ArgumentParser()
-
-  parser.add_argument("pid", help="pid of process to inspect", type=int)
-
-  args = parser.parse_args()
-
-  pid = args.pid
-
-  if not psutil.pid_exists(pid):
-    sys.exit(f"PID {pid} does not exist")
-
-  # Get process from PID
-  process = psutil.Process(pid)
+  print("Process attributes:")
+  print("-" * 80)
+  for key, value in p_attr.items():
+     print (f"{key}: {value}")
 
   # Get process's memory maps
   memory_maps = str(process.memory_maps())
@@ -67,6 +59,34 @@ def main():
   print("-" * 80)
   for dll in dll_files:
      print(get_file_hash(dll))
+   
+   
+
+def main():
+
+  parser = argparse.ArgumentParser()
+
+  parser.add_argument("pid", help="pid of process to inspect", type=int)
+
+  args = parser.parse_args()
+
+  pid = args.pid
+
+  if not psutil.pid_exists(pid):
+    sys.exit(f"PID {pid} does not exist")
+
+  # Get process from PID
+  process = psutil.Process(pid)
+
+  get_process_info(process)
+
+
+
+
+
+
+
+
 
 
 
