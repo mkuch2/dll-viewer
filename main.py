@@ -7,6 +7,7 @@ import subprocess
 import time
 import re
 import hashlib
+import csv
 
 
 def get_file_hash(file_path, algorithm='sha256', chunk_size=8192):
@@ -51,9 +52,9 @@ def get_process_info(process: psutil.Process):
   # Get filename without path
   dll_filenames = [name.split('\\')[-1] for name in dll_files]
 
-  print("DLL File Paths: ")
+  print("DLL File Names: ")
   print("-" * 80)
-  print(dll_files)
+  print(dll_filenames)
 
   print(".dll file hashes:")
   print("-" * 80)
@@ -66,31 +67,66 @@ def main():
 
   parser = argparse.ArgumentParser()
 
-  parser.add_argument("pid", help="pid of process to inspect", type=int)
+  #Select method for process selection, mutually exclusive
+  group = parser.add_mutually_exclusive_group(required = True)
+  group.add_argument("-p", "--pid", help="pid of process to inspect", type=int)
+  group.add_argument("-n", "--name", help="name of process to inspect e.g 'chrome.exe", \
+                       type = str)
+  group.add_argument("-e", "--execute", help="absolute path to file that will be executed", type = str)
+
+  parser.add_argument("-d", "--duration", help="Duration to execute a program \
+                      Used only with -e. Do not set if you do not want to set " \
+                      "a duration limit", type=int)
 
   args = parser.parse_args()
 
-  pid = args.pid
+  if args.execute:
+     file_path = args.execute
+     if not os.path.exists(file_path):
+        print(f"Executable not found at '{file_path}", file=sys.stderr)
+        sys.exit(1)
+     
+     f_name = os.path.basename(file_path)
+     try:
+        if args.duration:
+           # placeholder for duration-limited execution
+           print(f"Launching '{f_name}' with {args.duration}s timeout")
+           subp = subprocess.run([file_path], timeout=int(args.duration))
+        else:
+           print(f"Launching '{file_path}'")
+           # shell=True to resolve symbolic links
+           subp = subprocess.Popen(f'start \"\" \"{file_path}\"', shell=True)
 
-  if not psutil.pid_exists(pid):
-    sys.exit(f"PID {pid} does not exist")
+           # Give process time to start
+           time.sleep(1)
+       
+        # Get psutil process object from basename
+        # Because we are using shell=True, we can't get the pid from Popen
+        for proc in psutil.process_iter(['pid', 'name']):
+           if proc.info['name'] == f_name:
+              process = psutil.Process(proc.info['pid'])
+        
+        
+        get_process_info(process)
 
-  # Get process from PID
-  process = psutil.Process(pid)
+     except subprocess.CalledProcessError as e:
+        print(f"Error opening executable at '{file_path}'", file=sys.stderr)
+        sys.exit(1)
+     except psutil.NoSuchProcess as e:
+        print(f"Error finding process with PID {subp.pid}", file=sys.stderr)
+        sys.exit(1)
+     except psutil.AccessDenied as e:
+        print(f"Access denied to file {file_path}", file=sys.stderr)
+        sys.exit(1)
 
-  get_process_info(process)
-
-
-
-
-
-
-
-
-
+  elif args.duration:
+     print(f"Duration flag must be used in conjunction with -e", file=sys.stderr)
+     sys.exit(1)
 
 
 if __name__ == "__main__":
   main()
     
+
+
 
