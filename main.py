@@ -31,6 +31,27 @@ def get_file_hash(file_path, algorithm='sha256', chunk_size=8192):
             hasher.update(chunk)
     return hasher.hexdigest()
 
+def get_pid_from_filepath(filepath):
+    """
+    Finds the PID of a process that has the given filepath open.
+
+    Args:
+        filepath (str): The absolute path to the file.
+
+    Returns:
+        int or None: The PID of the process if found, otherwise None.
+    """
+    absolute_filepath = os.path.abspath(filepath)
+    for proc in psutil.process_iter(['pid', 'open_files']):
+        try:
+            for opened_file in proc.open_files():
+                if opened_file.path == absolute_filepath:
+                    return proc.pid
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            # Handle cases where the process no longer exists or access is denied
+            continue
+    return None
+
 def get_process_info(process: psutil.Process):
   p_attr = process.as_dict(attrs=['name', 'username', 'exe', 'cmdline', 'create_time'])
 
@@ -70,7 +91,7 @@ def main():
   #Select method for process selection, mutually exclusive
   group = parser.add_mutually_exclusive_group(required = True)
   group.add_argument("-p", "--pid", help="pid of process to inspect", type=int)
-  group.add_argument("-n", "--name", help="name of process to inspect e.g 'chrome.exe", \
+  group.add_argument("-P", "--path", help="absolute path of process to inspect e.g 'chrome.exe", \
                        type = str)
   group.add_argument("-e", "--execute", help="absolute path to file that will be executed", type = str)
 
@@ -80,6 +101,16 @@ def main():
 
   args = parser.parse_args()
 
+  # Get process by PID
+  if args.pid:
+     pid = args.pid
+   
+  # Get process by name
+  if args.path:
+     pid = get_pid_from_filepath(args.path)
+     
+
+  # Execute process
   if args.execute:
      file_path = args.execute
      if not os.path.exists(file_path):
@@ -102,13 +133,7 @@ def main():
        
         # Get psutil process object from basename
         # Because we are using shell=True, we can't get the pid from Popen
-        for proc in psutil.process_iter(['pid', 'name']):
-           if proc.info['name'] == f_name:
-              process = psutil.Process(proc.info['pid'])
-        
-        
-        get_process_info(process)
-
+        pid = get_pid_from_filepath(file_path)
      except subprocess.CalledProcessError as e:
         print(f"Error opening executable at '{file_path}'", file=sys.stderr)
         sys.exit(1)
@@ -118,10 +143,13 @@ def main():
      except psutil.AccessDenied as e:
         print(f"Access denied to file {file_path}", file=sys.stderr)
         sys.exit(1)
-
   elif args.duration:
      print(f"Duration flag must be used in conjunction with -e", file=sys.stderr)
      sys.exit(1)
+
+  # Get Process object 
+  process = psutil.Process(pid)
+  get_process_info(process)
 
 
 if __name__ == "__main__":
