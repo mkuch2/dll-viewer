@@ -8,6 +8,7 @@ import time
 import re
 import hashlib
 import csv
+from typing import List
 
 
 def get_file_hash(file_path, algorithm='sha256', chunk_size=8192):
@@ -22,6 +23,7 @@ def get_file_hash(file_path, algorithm='sha256', chunk_size=8192):
     Returns:
         str: The hexadecimal representation of the file's hash.
     """
+    print("Entered get_file_hash")
     hasher = hashlib.new(algorithm)
     with open(file_path, 'rb') as f:
         while True:
@@ -31,34 +33,42 @@ def get_file_hash(file_path, algorithm='sha256', chunk_size=8192):
             hasher.update(chunk)
     return hasher.hexdigest()
 
-def get_pid_from_filepath(filepath):
-    """
-    Finds the PID of a process that has the given filepath open.
+# def get_pid_from_filepath(filepath):
+#     """
+#     Finds the PID of a process that has the given filepath open.
 
-    Args:
-        filepath (str): The absolute path to the file.
+#     Args:
+#         filepath (str): The absolute path to the file.
 
-    Returns:
-        int or None: The PID of the process if found, otherwise None.
-    """
-    absolute_filepath = os.path.abspath(filepath)
-    for proc in psutil.process_iter(['pid', 'open_files']):
-        try:
-            for opened_file in proc.open_files():
-                if opened_file.path == absolute_filepath:
-                    return proc.pid
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            # Handle cases where the process no longer exists or access is denied
-            continue
-    return None
+#     Returns:
+#         int or None: The PID of the process if found, otherwise None.
+#     """
+#     print("Entered get_pid_from_filepath")
+#     absolute_filepath = os.path.abspath(filepath)
+#     for proc in psutil.process_iter(['pid', 'open_files']):
+#         try:
+#             for opened_file in proc.open_files():
+#                 if opened_file.path == absolute_filepath:
+#                     print(f"Proc id found: {proc.pid}")
+#                     return proc.pid
+#         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+#             # Handle cases where the process no longer exists or access is denied
+#             continue
+#     print("Proc id not found, returning none")
+#     return None
 
 def get_process_info(process: psutil.Process):
-  p_attr = process.as_dict(attrs=['name', 'username', 'exe', 'cmdline', 'create_time'])
+  print("Entered get_process_info")
+  p_attr = process.as_dict(attrs=['name', 'username', 'exe', 'cmdline', 'create_time'], \
+                           ad_value="N/A")
 
   print("Process attributes:")
   print("-" * 80)
   for key, value in p_attr.items():
      print (f"{key}: {value}")
+   
+  # Convert dict values to list, to include in return list
+  p_attr_list = list(p_attr.values())
 
   # Get process's memory maps
   memory_maps = str(process.memory_maps())
@@ -81,78 +91,117 @@ def get_process_info(process: psutil.Process):
   print("-" * 80)
   for dll in dll_files:
      print(get_file_hash(dll))
+
+  return [dll_files, dll_filenames, p_attr_list]
    
+def create_csv_file(pid: str, data: List[List[str]]):
+   print("Entered create_csv_file")
+   with open(f'{pid}.csv', mode='x', newline='') as csvfile:
+      writer = csv.writer(csvfile, quoting=csv.QUOTE_MINIMAL)
+
+      # Headers
+      writer.writerow(["Process name", "Username",  "Process path", \
+                       "Command line", "Creation time", "DLL Path", "DLL Name"])
+      
+      
+      rows = []
+      item_count = len(data[0])
+      index = 0
+      
+      # Initialize formatted rows
+      while index < item_count:
+         rows.append([data[2][0], data[2][1], data[2][2], data[2][3], data[2][4], 
+                       data[0][index], data[1][index]])
+         index += 1
+
+      writer.writerows(rows)
    
+   print(f"{pid}.csv successfully created")
 
 def main():
 
+  print("Entered main")
   parser = argparse.ArgumentParser()
 
   #Select method for process selection, mutually exclusive
   group = parser.add_mutually_exclusive_group(required = True)
   group.add_argument("-p", "--pid", help="pid of process to inspect", type=int)
-  group.add_argument("-P", "--path", help="absolute path of process to inspect e.g 'chrome.exe", \
-                       type = str)
-  group.add_argument("-e", "--execute", help="absolute path to file that will be executed", type = str)
+#   group.add_argument("-P", "--path", help="absolute path of process to inspect e.g 'chrome.exe", \
+#                        type = str)
+#   group.add_argument("-e", "--execute", help="absolute path to file that will be executed", type = str)
 
-  parser.add_argument("-d", "--duration", help="Duration to execute a program \
-                      Used only with -e. Do not set if you do not want to set " \
-                      "a duration limit", type=int)
+#   parser.add_argument("-d", "--duration", help="Duration to execute a program \
+#                       Used only with -e. Do not set if you do not want to set " \
+#                       "a duration limit", type=int)
+  
+  parser.add_argument("--csv", help="output data to csv file in current directory", \
+                      action='store_true')
 
   args = parser.parse_args()
+  print("After parse args")
 
   # Get process by PID
   if args.pid:
+     print("args.pid")
      pid = args.pid
    
   # Get process by name
-  if args.path:
-     pid = get_pid_from_filepath(args.path)
+#   if args.path:
+#      print("args.path")
+#      pid = get_pid_from_filepath(args.path)
      
 
-  # Execute process
-  if args.execute:
-     file_path = args.execute
-     if not os.path.exists(file_path):
-        print(f"Executable not found at '{file_path}", file=sys.stderr)
-        sys.exit(1)
+#   print("Right before args.execute")
+#   # Execute process
+#   if args.execute:
+#      print("Right after args.execute")
+#      file_path = args.execute
+#      if not os.path.exists(file_path):
+#         print(f"Executable not found at '{file_path}", file=sys.stderr)
+#         sys.exit(1)
      
-     f_name = os.path.basename(file_path)
-     try:
-        if args.duration:
-           # placeholder for duration-limited execution
-           print(f"Launching '{f_name}' with {args.duration}s timeout")
-           subp = subprocess.run([file_path], timeout=int(args.duration))
-        else:
-           print(f"Launching '{file_path}'")
-           # shell=True to resolve symbolic links
-           subp = subprocess.Popen(f'start \"\" \"{file_path}\"', shell=True)
+#      f_name = os.path.basename(file_path)
+#      try:
+#         if args.duration:
+#            # placeholder for duration-limited execution
+#            print(f"Launching '{f_name}' with {args.duration}s timeout")
+#            subp = subprocess.run([file_path], timeout=int(args.duration))
+#         else:
+#            print(f"Launching '{file_path}'")
+#            # shell=True to resolve symbolic links
+#            subp = subprocess.Popen(f'start \"\" \"{file_path}\"', shell=True)
 
-           # Give process time to start
-           time.sleep(1)
+#            # Give process time to start
+#            time.sleep(1)
        
-        # Get psutil process object from basename
-        # Because we are using shell=True, we can't get the pid from Popen
-        pid = get_pid_from_filepath(file_path)
-     except subprocess.CalledProcessError as e:
-        print(f"Error opening executable at '{file_path}'", file=sys.stderr)
-        sys.exit(1)
-     except psutil.NoSuchProcess as e:
-        print(f"Error finding process with PID {subp.pid}", file=sys.stderr)
-        sys.exit(1)
-     except psutil.AccessDenied as e:
-        print(f"Access denied to file {file_path}", file=sys.stderr)
-        sys.exit(1)
-  elif args.duration:
-     print(f"Duration flag must be used in conjunction with -e", file=sys.stderr)
-     sys.exit(1)
+#         # Get psutil process object from basename
+#         # Because we are using shell=True, we can't get the pid from Popen
+#         pid = get_pid_from_filepath(file_path)
+#         print(f"After get_pid_from_filepath, pid is: {pid}")
+#      except subprocess.CalledProcessError as e:
+#         print(f"Error opening executable at '{file_path}'", file=sys.stderr)
+#         sys.exit(1)
+#      except psutil.NoSuchProcess as e:
+#         print(f"Error finding process with PID {subp.pid}", file=sys.stderr)
+#         sys.exit(1)
+#      except psutil.AccessDenied as e:
+#         print(f"Access denied to file {file_path}", file=sys.stderr)
+#         sys.exit(1)
+#   elif args.duration:
+#      print(f"Duration flag must be used in conjunction with -e", file=sys.stderr)
+#      sys.exit(1)
 
   # Get Process object 
   process = psutil.Process(pid)
-  get_process_info(process)
+  data = get_process_info(process)
+
+  if args.csv:
+     print("args.csv true")
+     create_csv_file(pid, data)
 
 
 if __name__ == "__main__":
+  print("Running main")
   main()
     
 
