@@ -61,7 +61,7 @@ def get_process_info(process: psutil.Process):
   print("Entered get_process_info")
   p_attr = process.as_dict(attrs=['name', 'username', 'exe', 'cmdline', 'create_time'], \
                            ad_value="N/A")
-
+  
   print("Process attributes:")
   print("-" * 80)
   for key, value in p_attr.items():
@@ -70,11 +70,15 @@ def get_process_info(process: psutil.Process):
   # Convert dict values to list, to include in return list
   p_attr_list = list(p_attr.values())
   
+  monitoring_start_time = time.time()
+
   dll_files = set()
   previous_dlls = set()
-
+  load_times = {}
+  
   # Poll process for loaded dlls
   while(process.is_running()):
+    current_poll_time = f"{time.time() - monitoring_start_time:.2f}"
     # Get process's memory maps
     memory_maps = str(process.memory_maps())
     
@@ -84,9 +88,12 @@ def get_process_info(process: psutil.Process):
     # Check for newly loaded DLLs
     new_dlls = current_dlls - previous_dlls
     for dll_file in new_dlls:
-       print(f"New DLL {dll_file} loaded", flush=True)
+       load_times[dll_file] = current_poll_time
+       print(f"New DLL {dll_file} loaded at poll time {current_poll_time}", flush=True)
 
-   # Update sets    
+
+
+    # Update sets    
     dll_files.update(current_dlls)
     previous_dlls = current_dlls
 
@@ -96,6 +103,9 @@ def get_process_info(process: psutil.Process):
   print("DLL File Paths: ")
   print("-" * 80)
   print(dll_files_list)
+
+    # Correlate dll load times to list order
+  dll_relative_times = [load_times.get(dll, "0.0") for dll in dll_files_list]
   
   # Get filename without path
   dll_filenames = [os.path.basename(name) for name in dll_files]
@@ -104,12 +114,15 @@ def get_process_info(process: psutil.Process):
   print("-" * 80)
   print(dll_filenames)
 
+  # Get hashes for each DLL
   print(".dll file hashes:")
   print("-" * 80)
   for dll in dll_files:
    print(get_file_hash(dll))
 
-  return [dll_files_list, dll_filenames, p_attr_list]
+
+
+  return [dll_files_list, dll_filenames, dll_relative_times, p_attr_list]
    
 def create_csv_file(pid: str, data: List[List[str]]):
    print("Entered create_csv_file")
@@ -118,7 +131,8 @@ def create_csv_file(pid: str, data: List[List[str]]):
 
       # Headers
       writer.writerow(["Process name", "Username",  "Process path", \
-                       "Command line", "Creation time", "DLL Path", "DLL Name"])
+                       "Command line", "Creation time", "DLL Path", "DLL Name", \
+                       "Time loaded"])
       
       
       rows = []
@@ -127,8 +141,8 @@ def create_csv_file(pid: str, data: List[List[str]]):
       
       # Initialize formatted rows
       while index < item_count:
-         rows.append([data[2][0], data[2][1], data[2][2], data[2][3], data[2][4], 
-                       data[0][index], data[1][index]])
+         rows.append([data[3][0], data[3][1], data[3][2], data[3][3], data[3][4], 
+                       data[0][index], data[1][index], data[2][index]])
          index += 1
 
       writer.writerows(rows)
