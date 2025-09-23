@@ -69,19 +69,36 @@ def get_process_info(process: psutil.Process):
    
   # Convert dict values to list, to include in return list
   p_attr_list = list(p_attr.values())
+  
+  dll_files = set()
+  previous_dlls = set()
 
-  # Get process's memory maps
-  memory_maps = str(process.memory_maps())
+  # Poll process for loaded dlls
+  while(process.is_running()):
+    # Get process's memory maps
+    memory_maps = str(process.memory_maps())
+    
+    # Get DLL file paths
+    current_dlls = set(re.findall(r"\'([^']+\.dll)\'", memory_maps))
+    
+    # Check for newly loaded DLLs
+    new_dlls = current_dlls - previous_dlls
+    for dll_file in new_dlls:
+       print(f"New DLL {dll_file} loaded", flush=True)
 
-  # Get DLL file paths
-  dll_files = re.findall(r"\'([^']+\.dll)\'", memory_maps)
+   # Update sets    
+    dll_files.update(current_dlls)
+    previous_dlls = current_dlls
 
+    time.sleep(1)
+  
+  dll_files_list = list(dll_files)
   print("DLL File Paths: ")
   print("-" * 80)
-  print(dll_files)
-
+  print(dll_files_list)
+  
   # Get filename without path
-  dll_filenames = [name.split('\\')[-1] for name in dll_files]
+  dll_filenames = [os.path.basename(name) for name in dll_files]
 
   print("DLL File Names: ")
   print("-" * 80)
@@ -90,9 +107,9 @@ def get_process_info(process: psutil.Process):
   print(".dll file hashes:")
   print("-" * 80)
   for dll in dll_files:
-     print(get_file_hash(dll))
+   print(get_file_hash(dll))
 
-  return [dll_files, dll_filenames, p_attr_list]
+  return [dll_files_list, dll_filenames, p_attr_list]
    
 def create_csv_file(pid: str, data: List[List[str]]):
    print("Entered create_csv_file")
