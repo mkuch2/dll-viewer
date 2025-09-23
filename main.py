@@ -8,7 +8,15 @@ import time
 import re
 import hashlib
 import csv
+from datetime import datetime
 from typing import List
+
+IDX_P_NAME = 0
+IDX_P_USERNAME = 1
+IDX_P_EXE = 2
+IDX_P_CMDLINE = 3
+IDX_P_CREATETIME = 4
+IDX_PROCESS = 3
 
 
 def get_file_hash(file_path, algorithm='sha256', chunk_size=8192):
@@ -59,16 +67,24 @@ def get_file_hash(file_path, algorithm='sha256', chunk_size=8192):
 
 def get_process_info(process: psutil.Process):
   print("Entered get_process_info")
-  p_attr = process.as_dict(attrs=['name', 'username', 'exe', 'cmdline', 'create_time'], \
+  p_attr_dict = process.as_dict(attrs=['name', 'username', 'exe', 'cmdline', 'create_time'], \
                            ad_value="N/A")
+  
+ 
   
   print("Process attributes:")
   print("-" * 80)
-  for key, value in p_attr.items():
+  for key, value in p_attr_dict.items():
      print (f"{key}: {value}")
    
   # Convert dict values to list, to include in return list
-  p_attr_list = list(p_attr.values())
+  p_attr_list = [
+     p_attr_dict.get('name'),
+     p_attr_dict.get('username'),
+     p_attr_dict.get('exe'),
+     p_attr_dict.get('cmdline'),
+     datetime.datetime.fromtimestamp(p_attr_dict.get('create_time')).strftime("%Y-%m-%d %H:%M:%S")
+  ]
   
   monitoring_start_time = time.time()
 
@@ -141,8 +157,9 @@ def create_csv_file(pid: str, data: List[List[str]]):
       
       # Initialize formatted rows
       while index < item_count:
-         rows.append([data[3][0], data[3][1], data[3][2], data[3][3], data[3][4], 
-                       data[0][index], data[1][index], data[2][index]])
+         rows.append([data[IDX_PROCESS][IDX_P_NAME], data[IDX_PROCESS][IDX_P_USERNAME],
+                      data[IDX_PROCESS][IDX_P_EXE], data[IDX_PROCESS][IDX_P_CMDLINE],
+                      data[IDX_PROCESS][IDX_P_CREATETIME], data[0][index], data[1][index], data[2][index]])
          index += 1
 
       writer.writerows(rows)
