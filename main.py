@@ -8,7 +8,7 @@ import time
 import re
 import hashlib
 import csv
-from datetime import datetime
+import datetime
 from typing import List
 
 IDX_P_NAME = 0
