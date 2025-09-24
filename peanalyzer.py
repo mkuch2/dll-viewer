@@ -1,15 +1,15 @@
 import pefile
+import sys
+import datetime
 
 # Things to analyze:
 
 # Condition of sections (e.g writeable when it shouldn't be)
-def section_info(path: str):
+def section_info(pe: pefile.PE):
   IMAGE_SCN_MEM_EXECUTE = 0x20000000
   IMAGE_SCN_MEM_READ = 0x40000000
   IMAGE_SCN_MEM_WRITE = 0x80000000
 
-
-  pe = pefile.PE(path)
   characteristics = []
   for section in pe.sections:
     writeable = bool(section.Characteristics & IMAGE_SCN_MEM_WRITE)
@@ -27,9 +27,35 @@ def section_info(path: str):
   return characteristics
   
 # Get stub
+def get_stub(pe: pefile.PE):
+  # RVA of stub start
+  stub_start = 0x40
 
+  # Treat any rich headers as part of stub :P
+  stub_end = pe.DOS_HEADER.e_lfanew
+
+  # Get hex values of stub
+  stub_data = pe.get_data(stub_start, stub_end) 
+  
+  return str(stub_data)
+
+
+  
 
 # Large difference between VirtualSize (size in memory) and SizeOfRawData (disk)
+
+# TimeDateStamp in IMAGE_FILE_HEADER to check when file was created
+def get_timedatestamp(pe: pefile.PE):
+  # Get UNIX timestamp
+  tds = pe.FILE_HEADER.TimeDateStamp
+
+  # Convert to date (YYYY-MM-DD HH:MM:SS)
+  date = datetime.datetime.fromtimestamp(tds)
+  return date
+
+
+
+# ExportTableAddress, ImportTableAddress, ImportAddressTable, ResourcesTable
 
 # PE overlays - extra data appended to end of file
 
@@ -39,3 +65,34 @@ def section_info(path: str):
 # Delay Import Descriptor in Data Directory
 
 # Check stub
+
+def main():
+  print("In main")
+  if len(sys.argv) == 1:
+    print("No arguments provided, exiting.", file=sys.stderr)
+    exit(1)
+  
+  pe_files = []
+  print(f"Argument: {sys.argv[1]}")
+  for path in sys.argv:
+    pe_files.append(pefile.PE(sys.argv[1]))
+
+  section_info(pe_files[0])
+  get_stub(pe_files[0])
+  get_timedatestamp(pe_files[0])
+
+  # pe_files[0].print_info()
+
+
+main()
+  
+  
+
+  
+
+  
+
+    
+
+
+  

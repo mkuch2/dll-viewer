@@ -41,6 +41,7 @@ def get_file_hash(file_path, algorithm='sha256', chunk_size=8192):
             hasher.update(chunk)
     return hasher.hexdigest()
 
+
 # def get_pid_from_filepath(filepath):
 #     """
 #     Finds the PID of a process that has the given filepath open.
