@@ -1,6 +1,7 @@
 import pefile
 import sys
 import datetime
+from collections import defaultdict
 
 # Things to analyze:
 
@@ -56,6 +57,26 @@ def get_timedatestamp(pe: pefile.PE):
 
 
 # ExportTableAddress, ImportTableAddress, ImportAddressTable, ResourcesTable
+def get_imports(pe: pefile.PE):
+  # List of ImportDescData instances
+  import_table = pe.DIRECTORY_ENTRY_IMPORT
+
+  imp_dlls_and_symbols = defaultdict(list)
+  # For each ImportDescData
+  for imp_desc in import_table:
+    imp_desc_name = imp_desc.dll.decode('utf-8')
+    print("Name: " + imp_desc_name)
+    # List of ImportData instances
+    imports = imp_desc.imports
+    for imp_data in imports:
+      imp_data_name = imp_data.name.decode('utf-8')
+      print("Imported symbols: " + imp_data_name)
+      imp_dlls_and_symbols[imp_desc_name].append(imp_data_name)
+      
+  
+  return imp_desc_name
+    
+  
 
 # PE overlays - extra data appended to end of file
 
@@ -80,19 +101,10 @@ def main():
   section_info(pe_files[0])
   get_stub(pe_files[0])
   get_timedatestamp(pe_files[0])
+  imps = get_imports(pe_files[0]);
+
 
   # pe_files[0].print_info()
 
 
 main()
-  
-  
-
-  
-
-  
-
-    
-
-
-  
