@@ -56,7 +56,7 @@ def get_timedatestamp(pe: pefile.PE):
 
 
 
-# ExportTableAddress, ImportTableAddress, ImportAddressTable, ResourcesTable
+# ExportTableAddress, ResourcesTable (get_resources_strings)
 def get_imports(pe: pefile.PE):
   # List of ImportDescData instances
   import_table = pe.DIRECTORY_ENTRY_IMPORT
@@ -75,8 +75,32 @@ def get_imports(pe: pefile.PE):
       
   
   return imp_desc_name
+
+def get_exports(pe: pefile.PE):
+  # ExportDirData instance
+  exp_table = pe.DIRECTORY_ENTRY_EXPORT
+
+  # List of ExportData instances
+  exp_symbols = exp_table.symbols
+
+  # name : (addr, forwarder)
+  symbols = defaultdict(list)
+  for symbol in exp_symbols:
+    smbl_name = symbol.name.decode('utf-8')
+    smbl_addr = symbol.address
+    smbl_forwarder = symbol.forwarder
+
+    symbols[smbl_name] = (smbl_addr, smbl_forwarder)
     
-  
+    print(f"Symbol name: {smbl_name}")
+    print(f"Symbol address: {smbl_addr}")
+    print(f"Symbol forwarder: {smbl_forwarder}")
+
+  return symbols
+
+
+def get_resource_strings(pe: pefile.PE):
+
 
 # PE overlays - extra data appended to end of file
 
@@ -101,7 +125,9 @@ def main():
   section_info(pe_files[0])
   get_stub(pe_files[0])
   get_timedatestamp(pe_files[0])
-  imps = get_imports(pe_files[0]);
+  imps = get_imports(pe_files[0])
+  exps = get_exports(pe_files[0])
+  
 
 
   # pe_files[0].print_info()
