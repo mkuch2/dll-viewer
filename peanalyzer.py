@@ -54,9 +54,6 @@ def get_timedatestamp(pe: pefile.PE):
   date = datetime.datetime.fromtimestamp(tds)
   return date
 
-
-
-# ExportTableAddress, ResourcesTable (get_resources_strings)
 def get_imports(pe: pefile.PE):
   # List of ImportDescData instances
   import_table = pe.DIRECTORY_ENTRY_IMPORT
@@ -66,14 +63,21 @@ def get_imports(pe: pefile.PE):
   for imp_desc in import_table:
     imp_desc_name = imp_desc.dll.decode('utf-8')
     print("Name: " + imp_desc_name)
+
     # List of ImportData instances
     imports = imp_desc.imports
+
     for imp_data in imports:
-      imp_data_name = imp_data.name.decode('utf-8')
+      if imp_data.name is None:
+        # Get ordinal if DLL not imported by name
+        imp_data_name = imp_data.ordinal
+      else: 
+        # Else get name
+        imp_data_name = imp_data.name.decode('utf-8')
+
       print("Imported symbols: " + imp_data_name)
       imp_dlls_and_symbols[imp_desc_name].append(imp_data_name)
       
-  
   return imp_desc_name
 
 def get_exports(pe: pefile.PE):
@@ -86,7 +90,13 @@ def get_exports(pe: pefile.PE):
   # name : (addr, forwarder)
   symbols = defaultdict(list)
   for symbol in exp_symbols:
-    smbl_name = symbol.name.decode('utf-8')
+    if symbol.name is None:
+      # Get ordinal if symbol has no name
+      smbl_name = symbol.ordinal
+    else:
+      # Else get name
+      smbl_name = symbol.name.decode('utf-8')
+
     smbl_addr = symbol.address
     smbl_forwarder = symbol.forwarder
 
@@ -98,18 +108,51 @@ def get_exports(pe: pefile.PE):
 
   return symbols
 
-
-def get_resource_strings(pe: pefile.PE):
-
-
-# PE overlays - extra data appended to end of file
-
 # TLS callbacks - threads set to run code before entry point is ran
+# TODO: FINISH
+# def get_tls_callbacks(pe: pefile.PE):
+#   # No TLS Directory found
+#   if not hasattr(pe, 'DIRECTORY_ENTRY_TLS'):
+#     print(f"No TLS directory found")
+  
+#   # IMAGE_TLS_DIRECTORY struct
+#   tls_dir = pe.DIRECTORY_ENTRY_TLS.struct
+
+#   print(f"Struct TLS: {str(tls_dir)}")
+
+
+
+  
+
+
 
 # Delay-Load imports - only load DLLs when they are first called, check
 # Delay Import Descriptor in Data Directory
+def get_delay_imports(pe: pefile.PE):
+  if hasattr(pe, 'DIRECTORY_ENTRY_DELAY_IMPORT'):
+    print("PE has Delay Import Directory entry")
 
-# Check stub
+    del_imp_dll_and_smbls = defaultdict(list)
+
+    # Iterate through list of ImportDescData
+    for dir_entry in pe.DIRECTORY_ENTRY_DELAY_IMPORT:
+      dll_name = dir_entry.dll.decode('utf-8')
+      print(f"Delayed Imported DLL: {dir_entry.dll.decode('utf-8')}")
+
+      # Iterate through dir_entry's ImportData objects
+      for imp_smbl in dir_entry.imports:
+        if imp_smbl.name is None:
+          imp_smbl_name = imp_smbl.ordinal
+        else:  
+          imp_smbl_name = imp_smbl.name.decode('utf-8')
+
+        print(f"Imported functions: {imp_smbl_name}")
+        del_imp_dll_and_smbls[dll_name].append(imp_smbl_name)
+  else:
+    print("PE does not have dir entry")
+    return None
+  
+  return del_imp_dll_and_smbls
 
 def main():
   print("In main")
@@ -127,6 +170,20 @@ def main():
   get_timedatestamp(pe_files[0])
   imps = get_imports(pe_files[0])
   exps = get_exports(pe_files[0])
+
+  ## TODO: EXPAND AND ENUMERATE THROUGH ALL RESOURCES IN RESOURCE DIR
+  resource_strings = pe_files[0].get_resources_strings()
+  print(str(resource_strings))
+
+  # Get overlay if any, and print
+  overlay = pe_files[0].get_overlay()
+  print(overlay.decode('ascii', errors='ignore'))
+
+  del_imports = get_delay_imports(pe_files[0])
+
+  for key, value in del_imports.items():
+    print("In main, printing values")
+    print(f"{key}:{value}")
   
 
 
