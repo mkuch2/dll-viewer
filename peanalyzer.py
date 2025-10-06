@@ -109,20 +109,169 @@ def get_exports(pe: pefile.PE):
   return symbols
 
 # TLS callbacks - threads set to run code before entry point is ran
-# TODO: FINISH
-# def get_tls_callbacks(pe: pefile.PE):
-#   # No TLS Directory found
-#   if not hasattr(pe, 'DIRECTORY_ENTRY_TLS'):
-#     print(f"No TLS directory found")
+import pefile
+import sys
+import datetime
+from collections import defaultdict
+
+# Things to analyze:
+
+# Condition of sections (e.g writeable when it shouldn't be)
+def section_info(pe: pefile.PE):
+  IMAGE_SCN_MEM_EXECUTE = 0x20000000
+  IMAGE_SCN_MEM_READ = 0x40000000
+  IMAGE_SCN_MEM_WRITE = 0x80000000
+
+  characteristics = []
+  for section in pe.sections:
+    writeable = bool(section.Characteristics & IMAGE_SCN_MEM_WRITE)
+    executable = bool(section.Characteristics & IMAGE_SCN_MEM_EXECUTE)
+    readable = bool(section.Characteristics & IMAGE_SCN_MEM_READ)
+
+    # Decode byte to string and strip null bytes to get just section name
+    section_name = section.Name.decode().strip('\\x00')
+
+    characteristics.append((section_name, section.Misc_VirtualSize, 
+                           section.SizeOfRawData, [writeable, executable, readable]))
   
-#   # IMAGE_TLS_DIRECTORY struct
-#   tls_dir = pe.DIRECTORY_ENTRY_TLS.struct
+  print("Returning: " + str(characteristics))
+  
+  return characteristics
+  
+# Get stub
+def get_stub(pe: pefile.PE):
+  # RVA of stub start
+  stub_start = 0x40
 
-#   print(f"Struct TLS: {str(tls_dir)}")
+  # Treat any rich headers as part of stub :P
+  stub_end = pe.DOS_HEADER.e_lfanew
 
+  # Get hex values of stub
+  stub_data = pe.get_data(stub_start, stub_end) 
+  
+  return str(stub_data)
 
 
   
+
+# Large difference between VirtualSize (size in memory) and SizeOfRawData (disk)
+
+# TimeDateStamp in IMAGE_FILE_HEADER to check when file was created
+def get_timedatestamp(pe: pefile.PE):
+  # Get UNIX timestamp
+  tds = pe.FILE_HEADER.TimeDateStamp
+
+  # Convert to date (YYYY-MM-DD HH:MM:SS)
+  date = datetime.datetime.fromtimestamp(tds)
+  return date
+
+def get_imports(pe: pefile.PE):
+  # List of ImportDescData instances
+  import_table = pe.DIRECTORY_ENTRY_IMPORT
+
+  imp_dlls_and_symbols = defaultdict(list)
+  # For each ImportDescData
+  for imp_desc in import_table:
+    imp_desc_name = imp_desc.dll.decode('utf-8')
+    print("Name: " + imp_desc_name)
+
+    # List of ImportData instances
+    imports = imp_desc.imports
+
+    for imp_data in imports:
+      if imp_data.name is None:
+        # Get ordinal if DLL not imported by name
+        imp_data_name = imp_data.ordinal
+      else: 
+        # Else get name
+        imp_data_name = imp_data.name.decode('utf-8')
+
+      print("Imported symbols: " + imp_data_name)
+      imp_dlls_and_symbols[imp_desc_name].append(imp_data_name)
+      
+  return imp_desc_name
+
+def get_exports(pe: pefile.PE):
+  # ExportDirData instance
+  exp_table = pe.DIRECTORY_ENTRY_EXPORT
+
+  # List of ExportData instances
+  exp_symbols = exp_table.symbols
+
+  # name : (addr, forwarder)
+  symbols = defaultdict(list)
+  for symbol in exp_symbols:
+    if symbol.name is None:
+      # Get ordinal if symbol has no name
+      smbl_name = symbol.ordinal
+    else:
+      # Else get name
+      smbl_name = symbol.name.decode('utf-8')
+
+    smbl_addr = symbol.address
+    smbl_forwarder = symbol.forwarder
+
+    symbols[smbl_name] = (smbl_addr, smbl_forwarder)
+    
+    print(f"Symbol name: {smbl_name}")
+    print(f"Symbol address: {smbl_addr}")
+    print(f"Symbol forwarder: {smbl_forwarder}")
+
+  return symbols
+
+# TLS callbacks - threads set to run code before entry point is ran
+def get_tls_callbacks(pe: pefile.PE):
+  # No TLS Directory found
+  if not hasattr(pe, 'DIRECTORY_ENTRY_TLS'):
+    print(f"No TLS directory found")
+    return None
+
+  # IMAGE_TLS_DIRECTORY struct
+  tls_dir = pe.DIRECTORY_ENTRY_TLS.struct
+
+  if not hasattr(tls_dir, "AddressOfCallBacks"):
+    print("PE has no TLS callbacks")
+    return None
+  
+  # Is PE 64-bit?
+  if(hex(pe.OPTIONAL_HEADER.Magic) == "0x20b"):
+    ptr_size = 8
+  else:
+    ptr_size = 4
+
+  callbacks = []
+  cb_ptr = tls_dir.AddressOfCallBacks
+  
+  while True:
+    try:
+      # Convert virtual address to RVA
+      cb_rva = cb_ptr - pe.OPTIONAL_HEADER.ImageBase
+      
+      # Read pointer-sized data from file
+      callback_addr = pe.get_data(cb_rva, ptr_size)
+      callback_addr = int.from_bytes(callback_addr, byteorder='little')
+
+      
+      # Check if we've reached the end (NULL pointer)
+      if callback_addr == 0:
+          break
+          
+      callbacks.append(hex(callback_addr))
+      print(f"TLS Callback #{len(callbacks)}: 0x{callback_addr:x}")
+      
+      # Move to next pointer
+      cb_ptr += ptr_size
+        
+    except Exception as e:
+      print(f"Error reading TLS callback: {e}")
+      break
+    
+    if not callbacks:
+      print("No TLS callbacks found")
+      return None
+        
+    print(f"Total TLS callbacks found: {len(callbacks)}")
+    return callbacks
 
 
 
@@ -154,6 +303,11 @@ def get_delay_imports(pe: pefile.PE):
   
   return del_imp_dll_and_smbls
 
+# Calculate entropy and hashes
+
+
+# Relocation Table
+
 def main():
   print("In main")
   if len(sys.argv) == 1:
@@ -172,18 +326,99 @@ def main():
   exps = get_exports(pe_files[0])
 
   ## TODO: EXPAND AND ENUMERATE THROUGH ALL RESOURCES IN RESOURCE DIR
-  resource_strings = pe_files[0].get_resources_strings()
-  print(str(resource_strings))
+  # resource_strings = pe_files[0].get_resources_strings()
+  # print(str(resource_strings))
 
   # Get overlay if any, and print
   overlay = pe_files[0].get_overlay()
-  print(overlay.decode('ascii', errors='ignore'))
+  # print(overlay.decode('ascii', errors='ignore'))
+
+  get_tls_callbacks(pe_files[0])
 
   del_imports = get_delay_imports(pe_files[0])
+  callbacks = get_tls_callbacks(pe_files[0])
+  print(callbacks)
 
-  for key, value in del_imports.items():
-    print("In main, printing values")
-    print(f"{key}:{value}")
+  # for key, value in del_imports.items():
+  #   print("In main, printing values")
+  #   print(f"{key}:{value}")
+  
+
+
+  # pe_files[0].print_info()
+
+
+main()
+
+
+
+# Delay-Load imports - only load DLLs when they are first called, check
+# Delay Import Descriptor in Data Directory
+def get_delay_imports(pe: pefile.PE):
+  if hasattr(pe, 'DIRECTORY_ENTRY_DELAY_IMPORT'):
+    print("PE has Delay Import Directory entry")
+
+    del_imp_dll_and_smbls = defaultdict(list)
+
+    # Iterate through list of ImportDescData
+    for dir_entry in pe.DIRECTORY_ENTRY_DELAY_IMPORT:
+      dll_name = dir_entry.dll.decode('utf-8')
+      print(f"Delayed Imported DLL: {dir_entry.dll.decode('utf-8')}")
+
+      # Iterate through dir_entry's ImportData objects
+      for imp_smbl in dir_entry.imports:
+        if imp_smbl.name is None:
+          imp_smbl_name = imp_smbl.ordinal
+        else:  
+          imp_smbl_name = imp_smbl.name.decode('utf-8')
+
+        print(f"Imported functions: {imp_smbl_name}")
+        del_imp_dll_and_smbls[dll_name].append(imp_smbl_name)
+  else:
+    print("PE does not have dir entry")
+    return None
+  
+  return del_imp_dll_and_smbls
+
+# Calculate entropy and hashes
+
+
+# Relocation Table
+
+def main():
+  print("In main")
+  if len(sys.argv) == 1:
+    print("No arguments provided, exiting.", file=sys.stderr)
+    exit(1)
+  
+  pe_files = []
+  print(f"Argument: {sys.argv[1]}")
+  for path in sys.argv:
+    pe_files.append(pefile.PE(sys.argv[1]))
+
+  section_info(pe_files[0])
+  get_stub(pe_files[0])
+  get_timedatestamp(pe_files[0])
+  imps = get_imports(pe_files[0])
+  exps = get_exports(pe_files[0])
+
+  ## TODO: EXPAND AND ENUMERATE THROUGH ALL RESOURCES IN RESOURCE DIR
+  # resource_strings = pe_files[0].get_resources_strings()
+  # print(str(resource_strings))
+
+  # Get overlay if any, and print
+  overlay = pe_files[0].get_overlay()
+  # print(overlay.decode('ascii', errors='ignore'))
+
+  get_tls_callbacks(pe_files[0])
+
+  del_imports = get_delay_imports(pe_files[0])
+  callbacks = get_tls_callbacks(pe_files[0])
+  print(callbacks)
+
+  # for key, value in del_imports.items():
+  #   print("In main, printing values")
+  #   print(f"{key}:{value}")
   
 
 
