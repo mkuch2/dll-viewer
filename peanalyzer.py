@@ -298,9 +298,16 @@ def get_delay_imports(pe: pefile.PE):
   return del_imp_dll_and_smbls
 
 # Calculate entropy and hashes
-
-
-
+def get_sections_entropy(pe: pefile.PE):
+  entropies = []
+  for section in pe.sections:
+    # Get section name
+    section_name = section.Name.decode().strip('\\x00')
+    entropy = section.get_entropy()
+    entropies.append((section_name,entropy))
+  
+  return entropies
+  
 # Relocation Table
 def get_reloc_data(pe: pefile.PE):
   if not hasattr(pe, "DIRECTORY_ENTRY_BASERELOC"):
@@ -316,7 +323,7 @@ def get_reloc_data(pe: pefile.PE):
     data = inst.entries
 
     for entry in data:
-      data_entries.append((base_reloc_data.RELOCATION_TYPE[entry.type], hex(entry.rva)))
+      data_entries.append((pefile.relocation_types[entry.type], hex(entry.rva)))
   
   return data_entries
 
@@ -363,6 +370,9 @@ def main():
 
   reloc_data = get_reloc_data(pe_files[0])
   print(reloc_data)
+
+  entropies = get_sections_entropy(pe_files[0])
+  print(entropies)
 
   
 
