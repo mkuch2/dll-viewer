@@ -151,9 +151,6 @@ def get_stub(pe: pefile.PE):
   
   return str(stub_data)
 
-
-  
-
 # Large difference between VirtualSize (size in memory) and SizeOfRawData (disk)
 
 # TimeDateStamp in IMAGE_FILE_HEADER to check when file was created
@@ -246,12 +243,11 @@ def get_tls_callbacks(pe: pefile.PE):
     try:
       # Convert virtual address to RVA
       cb_rva = cb_ptr - pe.OPTIONAL_HEADER.ImageBase
-      
+
       # Read pointer-sized data from file
       callback_addr = pe.get_data(cb_rva, ptr_size)
       callback_addr = int.from_bytes(callback_addr, byteorder='little')
 
-      
       # Check if we've reached the end (NULL pointer)
       if callback_addr == 0:
           break
@@ -273,8 +269,6 @@ def get_tls_callbacks(pe: pefile.PE):
     print(f"Total TLS callbacks found: {len(callbacks)}")
     return callbacks
 
-
-
 # Delay-Load imports - only load DLLs when they are first called, check
 # Delay Import Descriptor in Data Directory
 def get_delay_imports(pe: pefile.PE):
@@ -306,7 +300,31 @@ def get_delay_imports(pe: pefile.PE):
 # Calculate entropy and hashes
 
 
+
 # Relocation Table
+def get_reloc_data(pe: pefile.PE):
+  if not hasattr(pe, "DIRECTORY_ENTRY_BASERELOC"):
+    print("PE file has no Base Relocation Table")
+    return None
+  
+  # List of BaseRelocationData instances
+  base_reloc_data = pe.DIRECTORY_ENTRY_BASERELOC
+
+  data_entries = []
+  for inst in base_reloc_data:
+    # List of RelocationData instances
+    data = inst.entries
+
+    for entry in data:
+      data_entries.append((base_reloc_data.RELOCATION_TYPE[entry.type], hex(entry.rva)))
+  
+  return data_entries
+
+
+
+
+
+
 
 def main():
   print("In main")
@@ -342,6 +360,10 @@ def main():
   # for key, value in del_imports.items():
   #   print("In main, printing values")
   #   print(f"{key}:{value}")
+
+  reloc_data = get_reloc_data(pe_files[0])
+  print(reloc_data)
+
   
 
 
@@ -352,77 +374,3 @@ main()
 
 
 
-# Delay-Load imports - only load DLLs when they are first called, check
-# Delay Import Descriptor in Data Directory
-def get_delay_imports(pe: pefile.PE):
-  if hasattr(pe, 'DIRECTORY_ENTRY_DELAY_IMPORT'):
-    print("PE has Delay Import Directory entry")
-
-    del_imp_dll_and_smbls = defaultdict(list)
-
-    # Iterate through list of ImportDescData
-    for dir_entry in pe.DIRECTORY_ENTRY_DELAY_IMPORT:
-      dll_name = dir_entry.dll.decode('utf-8')
-      print(f"Delayed Imported DLL: {dir_entry.dll.decode('utf-8')}")
-
-      # Iterate through dir_entry's ImportData objects
-      for imp_smbl in dir_entry.imports:
-        if imp_smbl.name is None:
-          imp_smbl_name = imp_smbl.ordinal
-        else:  
-          imp_smbl_name = imp_smbl.name.decode('utf-8')
-
-        print(f"Imported functions: {imp_smbl_name}")
-        del_imp_dll_and_smbls[dll_name].append(imp_smbl_name)
-  else:
-    print("PE does not have dir entry")
-    return None
-  
-  return del_imp_dll_and_smbls
-
-# Calculate entropy and hashes
-
-
-# Relocation Table
-
-def main():
-  print("In main")
-  if len(sys.argv) == 1:
-    print("No arguments provided, exiting.", file=sys.stderr)
-    exit(1)
-  
-  pe_files = []
-  print(f"Argument: {sys.argv[1]}")
-  for path in sys.argv:
-    pe_files.append(pefile.PE(sys.argv[1]))
-
-  section_info(pe_files[0])
-  get_stub(pe_files[0])
-  get_timedatestamp(pe_files[0])
-  imps = get_imports(pe_files[0])
-  exps = get_exports(pe_files[0])
-
-  ## TODO: EXPAND AND ENUMERATE THROUGH ALL RESOURCES IN RESOURCE DIR
-  # resource_strings = pe_files[0].get_resources_strings()
-  # print(str(resource_strings))
-
-  # Get overlay if any, and print
-  overlay = pe_files[0].get_overlay()
-  # print(overlay.decode('ascii', errors='ignore'))
-
-  get_tls_callbacks(pe_files[0])
-
-  del_imports = get_delay_imports(pe_files[0])
-  callbacks = get_tls_callbacks(pe_files[0])
-  print(callbacks)
-
-  # for key, value in del_imports.items():
-  #   print("In main, printing values")
-  #   print(f"{key}:{value}")
-  
-
-
-  # pe_files[0].print_info()
-
-
-main()
