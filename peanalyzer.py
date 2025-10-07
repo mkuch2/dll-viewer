@@ -4,27 +4,33 @@ import datetime
 from collections import defaultdict
 
 # Condition of sections (e.g writeable when it shouldn't be)
-def sections_info(pe: pefile.PE):
+def get_sections_info(pe: pefile.PE):
   IMAGE_SCN_MEM_EXECUTE = 0x20000000
   IMAGE_SCN_MEM_READ = 0x40000000
   IMAGE_SCN_MEM_WRITE = 0x80000000
+  
+  sec_info = {}
 
-  characteristics = []
   for section in pe.sections:
-    writeable = bool(section.Characteristics & IMAGE_SCN_MEM_WRITE)
-    executable = bool(section.Characteristics & IMAGE_SCN_MEM_EXECUTE)
-    readable = bool(section.Characteristics & IMAGE_SCN_MEM_READ)
-
     # Decode byte to string and strip null bytes to get just section name
     section_name = section.Name.decode().strip('\\x00')
+    
+    writeable = str(bool(section.Characteristics & IMAGE_SCN_MEM_WRITE))
+    executable = str(bool(section.Characteristics & IMAGE_SCN_MEM_EXECUTE))
+    readable = str(bool(section.Characteristics & IMAGE_SCN_MEM_READ))
 
-    characteristics.append((section_name, section.Misc_VirtualSize, 
-                           section.SizeOfRawData, [writeable, executable, readable]))
-  
-  print("Returning: " + str(characteristics))
-  
-  return characteristics
-  
+    sec_info[section_name] = {
+      "hashes": {"sha256":section.get_hash_sha256(),
+                  "sha1":section.get_hash_sha1(),
+                  "md5":section.get_hash_md5()},
+      "entropy": section.get_entropy(),
+      "characteristics": ["R:" + readable, "W:" + writeable, "X:" + executable], 
+      "virtual_size": section.Misc_VirtualSize,
+      "sizeofrawdata": section.SizeOfRawData
+    }
+
+  return sec_info
+
 # Get stub
 def get_stub(pe: pefile.PE):
   # RVA of stub start
@@ -181,31 +187,6 @@ def get_delay_imports(pe: pefile.PE):
     return None
   
   return del_imp_dll_and_smbls
-
-# Calculate entropy and hashes
-def get_sections_entropy(pe: pefile.PE):
-  entropies = []
-  for section in pe.sections:
-    # Get section name
-    section_name = section.Name.decode().strip('\\x00')
-    entropy = section.get_entropy()
-    entropies.append((section_name,entropy))
-  
-  return entropies
-
-def get_sections_hashes(pe: pefile.PE):
-  sect_hashes = {}
-
-  for section in pe.sections:
-    section_name = section.Name.decode().strip('\\x00')
-
-    hashes = {"sha256":section.get_hash_sha256(),
-              "sha1":section.get_hash_sha1(),
-              "md5":section.get_hash_md5()}
-
-    sect_hashes[section_name] = hashes
-  
-  return sect_hashes
   
 # Relocation Table
 def get_reloc_data(pe: pefile.PE):
@@ -237,7 +218,10 @@ def main():
   for path in sys.argv:
     pe_files.append(pefile.PE(sys.argv[1]))
 
-  sections_info(pe_files[0])
+  info = get_sections_info(pe_files[0])
+  print(info)
+
+
   get_stub(pe_files[0])
   get_timedatestamp(pe_files[0])
   imps = get_imports(pe_files[0])
@@ -263,13 +247,6 @@ def main():
 
   reloc_data = get_reloc_data(pe_files[0])
   print(reloc_data)
-
-  entropies = get_sections_entropy(pe_files[0])
-  print(entropies)
-
-  hashes = get_sections_hashes(pe_files[0])
-  print(hashes)
-
 
   # pe_files[0].print_info()
 
