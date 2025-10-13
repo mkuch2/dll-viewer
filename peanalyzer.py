@@ -1,4 +1,6 @@
 import argparse
+import csv
+import json
 import datetime
 import hashlib
 import os
@@ -414,8 +416,11 @@ def get_reloc_data(pe: pefile.PE):
     print(f"Error in get_reloc_data: {e}", file=sys.stderr)
     return None
 
-def get_pe_info(pe_file_path: str):
+def get_pe_info(pe_file_path: str, write_csv: bool = False):
   print(f"Analyzing file: {pe_file_path}")
+
+  # rows for CSV output: list of (category, field, value)
+  csv_rows = []
 
   try:
     # Check if file exists
@@ -439,30 +444,50 @@ def get_pe_info(pe_file_path: str):
   try:
     info = get_sections_info(pe_file)
     print("Section info:", info)
+    if write_csv and info is not None:
+      for sname, sdata in info.items():
+        csv_rows.append(("section", "name", sname))
+        # include hashes and entropy
+        hashes = sdata.get('hashes', {})
+        for hname, hval in hashes.items():
+          csv_rows.append(("section", f"{sname}.{hname}", hval))
+        csv_rows.append(("section", f"{sname}.entropy", sdata.get('entropy')))
   except Exception as e:
     print(f"Error getting section info: {e}", file=sys.stderr)
 
   try:
     stub = get_stub(pe_file)
     print("Stub data retrieved successfully")
+    if write_csv:
+      csv_rows.append(("stub", "hex", stub))
   except Exception as e:
     print(f"Error getting stub: {e}", file=sys.stderr)
     
   try:
     timestamp = get_timedatestamp(pe_file)
     print(f"Timestamp: {timestamp}")
+    if write_csv:
+      csv_rows.append(("header", "timestamp", timestamp.isoformat() if timestamp else None))
   except Exception as e:
     print(f"Error getting timestamp: {e}", file=sys.stderr)
     
   try:
     imps = get_imports(pe_file)
     print("Imports retrieved successfully")
+    if write_csv and imps:
+      for dll, syms in imps.items():
+        csv_rows.append(("import", "dll", dll))
+        csv_rows.append(("import", f"{dll}.symbols", json.dumps(syms)))
   except Exception as e:
     print(f"Error getting imports: {e}", file=sys.stderr)
     
   try:
     exps = get_exports(pe_file)
     print("Exports retrieved successfully")
+    if write_csv and exps:
+      csv_rows.append(("export", "count", len(exps)))
+      for name, (addr, forwarder) in exps.items():
+        csv_rows.append(("export", name, json.dumps({'addr': addr, 'forwarder': forwarder})))
   except Exception as e:
     print(f"Error getting exports: {e}", file=sys.stderr)
 
@@ -471,6 +496,8 @@ def get_pe_info(pe_file_path: str):
       resource_strings = pe_file.get_resources_strings()
       if resource_strings:
         print(f"Resource strings found: {len(resource_strings)} entries")
+        if write_csv:
+          csv_rows.append(("resources", "count", len(resource_strings)))
       else:
         print("No resource strings found")
     else:
@@ -483,6 +510,8 @@ def get_pe_info(pe_file_path: str):
     overlay = pe_file.get_overlay()
     if overlay:
       print(f"Overlay found: {len(overlay)} bytes")
+      if write_csv:
+        csv_rows.append(("overlay", "size", len(overlay)))
     else:
       print("No overlay found")
   except Exception as e:
@@ -492,6 +521,9 @@ def get_pe_info(pe_file_path: str):
     callbacks = get_tls_callbacks(pe_file)
     if callbacks:
       print(f"TLS callbacks: {callbacks}")
+      if write_csv:
+        for cb in callbacks:
+          csv_rows.append(("tls_callback", "address", hex(cb.get('address')) if isinstance(cb.get('address'), int) else cb.get('address')))
     else:
       print("No TLS callbacks found")
   except Exception as e:
@@ -501,6 +533,9 @@ def get_pe_info(pe_file_path: str):
     del_imports = get_delay_imports(pe_file)
     if del_imports:
       print("Delay imports retrieved successfully")
+      if write_csv:
+        for dll, syms in del_imports.items():
+          csv_rows.append(("delay_import", dll, json.dumps(syms)))
     else:
       print("No delay imports found")
   except Exception as e:
@@ -510,10 +545,27 @@ def get_pe_info(pe_file_path: str):
     reloc_data = get_reloc_data(pe_file)
     if reloc_data:
       print(f"Relocation data: {len(reloc_data)} entries")
+      if write_csv:
+        for reloc_type, rva in reloc_data:
+          csv_rows.append(("relocation", reloc_type, rva))
     else:
       print("No relocation data found")
   except Exception as e:
     print(f"Error getting relocation data: {e}", file=sys.stderr)
+
+  # If requested, write CSV summary
+  if write_csv:
+    try:
+      csv_filename = os.path.splitext(os.path.basename(pe_file_path))[0] + '.csv'
+      with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['category', 'field', 'value'])
+        for row in csv_rows:
+          # Ensure all values are strings
+          writer.writerow([row[0], row[1], '' if row[2] is None else str(row[2])])
+      print(f"CSV summary written to {csv_filename}")
+    except Exception as e:
+      print(f"Error writing CSV file: {e}", file=sys.stderr)
 
 
 def main():
@@ -525,7 +577,7 @@ def main():
 
   args = parser.parse_args()
   pe_file_path = args.path
-  get_pe_info(pe_file_path)
+  get_pe_info(pe_file_path, write_csv=args.csv)
   
 if __name__ == "__main__":
   main()
