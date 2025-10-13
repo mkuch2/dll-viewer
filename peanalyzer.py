@@ -416,11 +416,25 @@ def get_reloc_data(pe: pefile.PE):
     print(f"Error in get_reloc_data: {e}", file=sys.stderr)
     return None
 
-def get_pe_info(pe_file_path: str, write_csv: bool = False):
+def get_pe_info(pe_file_path: str, write_csv: bool = False, write_json: bool = False):
   print(f"Analyzing file: {pe_file_path}")
 
   # rows for CSV output: list of (category, field, value)
   csv_rows = []
+  # JSON output format
+  report = {
+    'file': os.path.basename(pe_file_path),
+    'sections': None,
+    'stub': None,
+    'timestamp': None,
+    'imports': None,
+    'exports': None,
+    'resource_strings_count': None,
+    'overlay_size': None,
+    'tls_callbacks': None,
+    'delay_imports': None,
+    'relocations': None,
+  }
 
   try:
     # Check if file exists
@@ -444,6 +458,7 @@ def get_pe_info(pe_file_path: str, write_csv: bool = False):
   try:
     info = get_sections_info(pe_file)
     print("Section info:", info)
+    report['sections'] = info
     if write_csv and info is not None:
       for sname, sdata in info.items():
         csv_rows.append(("section", "name", sname))
@@ -458,6 +473,7 @@ def get_pe_info(pe_file_path: str, write_csv: bool = False):
   try:
     stub = get_stub(pe_file)
     print("Stub data retrieved successfully")
+    report['stub'] = stub
     if write_csv:
       csv_rows.append(("stub", "hex", stub))
   except Exception as e:
@@ -466,6 +482,7 @@ def get_pe_info(pe_file_path: str, write_csv: bool = False):
   try:
     timestamp = get_timedatestamp(pe_file)
     print(f"Timestamp: {timestamp}")
+    report['timestamp'] = timestamp.isoformat() if timestamp else None
     if write_csv:
       csv_rows.append(("header", "timestamp", timestamp.isoformat() if timestamp else None))
   except Exception as e:
@@ -474,6 +491,7 @@ def get_pe_info(pe_file_path: str, write_csv: bool = False):
   try:
     imps = get_imports(pe_file)
     print("Imports retrieved successfully")
+    report['imports'] = imps
     if write_csv and imps:
       for dll, syms in imps.items():
         csv_rows.append(("import", "dll", dll))
@@ -484,6 +502,7 @@ def get_pe_info(pe_file_path: str, write_csv: bool = False):
   try:
     exps = get_exports(pe_file)
     print("Exports retrieved successfully")
+    report['exports'] = exps
     if write_csv and exps:
       csv_rows.append(("export", "count", len(exps)))
       for name, (addr, forwarder) in exps.items():
@@ -496,6 +515,7 @@ def get_pe_info(pe_file_path: str, write_csv: bool = False):
       resource_strings = pe_file.get_resources_strings()
       if resource_strings:
         print(f"Resource strings found: {len(resource_strings)} entries")
+        report['resource_strings_count'] = len(resource_strings)
         if write_csv:
           csv_rows.append(("resources", "count", len(resource_strings)))
       else:
@@ -510,6 +530,7 @@ def get_pe_info(pe_file_path: str, write_csv: bool = False):
     overlay = pe_file.get_overlay()
     if overlay:
       print(f"Overlay found: {len(overlay)} bytes")
+      report['overlay_size'] = len(overlay)
       if write_csv:
         csv_rows.append(("overlay", "size", len(overlay)))
     else:
@@ -519,6 +540,7 @@ def get_pe_info(pe_file_path: str, write_csv: bool = False):
 
   try:
     callbacks = get_tls_callbacks(pe_file)
+    report['tls_callbacks'] = callbacks
     if callbacks:
       print(f"TLS callbacks: {callbacks}")
       if write_csv:
@@ -531,6 +553,7 @@ def get_pe_info(pe_file_path: str, write_csv: bool = False):
 
   try:
     del_imports = get_delay_imports(pe_file)
+    report['delay_imports'] = del_imports
     if del_imports:
       print("Delay imports retrieved successfully")
       if write_csv:
@@ -543,6 +566,7 @@ def get_pe_info(pe_file_path: str, write_csv: bool = False):
 
   try:
     reloc_data = get_reloc_data(pe_file)
+    report['relocations'] = reloc_data
     if reloc_data:
       print(f"Relocation data: {len(reloc_data)} entries")
       if write_csv:
@@ -567,6 +591,26 @@ def get_pe_info(pe_file_path: str, write_csv: bool = False):
     except Exception as e:
       print(f"Error writing CSV file: {e}", file=sys.stderr)
 
+  if write_json:
+    # Helper to convert non-serializable objects to JSON-friendly types
+    def make_serializable(obj):
+      if isinstance(obj, dict):
+        return {k: make_serializable(v) for k, v in obj.items()}
+      if isinstance(obj, list):
+        return [make_serializable(v) for v in obj]
+      if isinstance(obj, bytes):
+        return obj.hex()
+      # datetime values were converted to isoformat in report already
+      return obj
+
+    try:
+      serializable = make_serializable(report)
+      json_filename = os.path.splitext(os.path.basename(pe_file_path))[0] + '.json'
+      with open(json_filename, 'w', encoding='utf-8') as jf:
+        json.dump(serializable, jf, indent=2)
+      print(f"JSON report written to {json_filename}")
+    except Exception as e:
+      print(f"Error writing JSON report: {e}", file=sys.stderr)
 
 def main():
   parser = argparse.ArgumentParser(prog='peanalyzer', 
@@ -574,10 +618,13 @@ def main():
 
   parser.add_argument('path', help='Path to the PE file to analyze')
   parser.add_argument('--csv', action='store_true', help='Output CSV')
+  parser.add_argument('--json', action='store_true', help='Output JSON')
 
   args = parser.parse_args()
   pe_file_path = args.path
-  get_pe_info(pe_file_path, write_csv=args.csv)
+
+  get_pe_info(pe_file_path, write_csv=args.csv, write_json=args.json)
+
   
 if __name__ == "__main__":
   main()
