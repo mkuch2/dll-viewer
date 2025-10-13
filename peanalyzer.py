@@ -1,7 +1,10 @@
-import pefile
-import sys
+import argparse
 import datetime
+import hashlib
 import os
+import sys
+
+import pefile
 from collections import defaultdict
 
 # Condition of sections (e.g writeable when it shouldn't be)
@@ -26,12 +29,32 @@ def get_sections_info(pe: pefile.PE):
         executable = str(bool(section.Characteristics & IMAGE_SCN_MEM_EXECUTE))
         readable = str(bool(section.Characteristics & IMAGE_SCN_MEM_READ))
 
+        # Compute section hashes; pefile provides helpers but not guaranteed
+        hashes = {}
+        try:
+          hashes['sha256'] = section.get_hash_sha256()
+        except Exception:
+          try:
+            hashes['sha256'] = hashlib.sha256(section.get_data()).hexdigest()
+          except Exception:
+            hashes['sha256'] = None
+        try:
+          hashes['sha1'] = section.get_hash_sha1()
+        except Exception:
+          try:
+            hashes['sha1'] = hashlib.sha1(section.get_data()).hexdigest()
+          except Exception:
+            hashes['sha1'] = None
+        try:
+          hashes['md5'] = section.get_hash_md5()
+        except Exception:
+          try:
+            hashes['md5'] = hashlib.md5(section.get_data()).hexdigest()
+          except Exception:
+            hashes['md5'] = None
+
         sec_info[section_name] = {
-          "hashes": {
-            "sha256": section.get_hash_sha256(),
-            "sha1": section.get_hash_sha1(),
-            "md5": section.get_hash_md5()
-          },
+          "hashes": hashes,
           "entropy": section.get_entropy(),
           "characteristics": ["R:" + readable, "W:" + writeable, "X:" + executable], 
           "virtual_size": section.Misc_VirtualSize,
@@ -64,10 +87,14 @@ def get_stub(pe: pefile.PE):
       print("Warning: Invalid stub boundaries")
       return None
 
-    # Get hex values of stub
+    # Get raw stub bytes and return hex representation
     stub_data = pe.get_data(stub_start, stub_end - stub_start)
-    
-    return str(stub_data)
+    if stub_data:
+      try:
+        return stub_data.hex()
+      except Exception:
+        return str(stub_data)
+    return None
     
   except Exception as e:
     print(f"Error in get_stub: {e}", file=sys.stderr)
@@ -153,7 +180,7 @@ def get_exports(pe: pefile.PE):
     if not hasattr(pe, 'DIRECTORY_ENTRY_EXPORT'):
       print("No export directory found")
       return None
-      
+
     # ExportDirData instance
     exp_table = pe.DIRECTORY_ENTRY_EXPORT
 
@@ -161,11 +188,11 @@ def get_exports(pe: pefile.PE):
     if not hasattr(exp_table, 'symbols'):
       print("No export symbols found")
       return None
-      
+
     exp_symbols = exp_table.symbols
 
     # name : (addr, forwarder)
-    symbols = defaultdict(list)
+    symbols = {}
     for symbol in exp_symbols:
       try:
         if symbol.name is None:
@@ -179,7 +206,7 @@ def get_exports(pe: pefile.PE):
         smbl_forwarder = symbol.forwarder
 
         symbols[smbl_name] = (smbl_addr, smbl_forwarder)
-        
+
         print(f"Symbol name: {smbl_name}")
         print(f"Symbol address: {smbl_addr}")
         print(f"Symbol forwarder: {smbl_forwarder}")
@@ -188,7 +215,6 @@ def get_exports(pe: pefile.PE):
         continue
 
     return symbols
-    
   except Exception as e:
     print(f"Error in get_exports: {e}", file=sys.stderr)
     return None
@@ -204,73 +230,91 @@ def get_tls_callbacks(pe: pefile.PE):
     # IMAGE_TLS_DIRECTORY struct
     tls_dir = pe.DIRECTORY_ENTRY_TLS.struct
 
-    if not hasattr(tls_dir, "AddressOfCallBacks"):
+    addr_of_callbacks = getattr(tls_dir, 'AddressOfCallBacks', None)
+    if not addr_of_callbacks:
       print("PE has no TLS callbacks")
       return None
-    
-    # Is PE 64-bit?
+
+    # Determine pointer size (32 vs 64-bit)
     if not hasattr(pe, 'OPTIONAL_HEADER') or not hasattr(pe.OPTIONAL_HEADER, 'Magic'):
       print("Error: Cannot determine PE architecture")
       return None
-      
-    if hex(pe.OPTIONAL_HEADER.Magic) == "0x20b":
-      ptr_size = 8
+
+    ptr_size = 8 if hex(pe.OPTIONAL_HEADER.Magic) == '0x20b' else 4
+
+    imagebase = getattr(pe.OPTIONAL_HEADER, 'ImageBase', None)
+    size_of_image = getattr(pe.OPTIONAL_HEADER, 'SizeOfImage', None)
+
+    # Normalize AddressOfCallBacks to an RVA. AddressOfCallBacks can be either an RVA
+    # or a VA depending on how it was obtained; prefer treating values within the image
+    # range as VA and subtract ImageBase.
+    if imagebase and size_of_image and (addr_of_callbacks >= imagebase and addr_of_callbacks < imagebase + size_of_image):
+      cb_rva = addr_of_callbacks - imagebase
     else:
-      ptr_size = 4
+      cb_rva = addr_of_callbacks
 
     callbacks = []
-    cb_ptr = tls_dir.AddressOfCallBacks
-    
-    if not hasattr(pe.OPTIONAL_HEADER, 'ImageBase'):
-      print("Error: Cannot find ImageBase")
-      return None
-    
+
+    # Loop over the array of pointers (null-terminated)
     while True:
       try:
-        # Convert virtual address to RVA
-        cb_rva = cb_ptr - pe.OPTIONAL_HEADER.ImageBase
-        
-        # Validate RVA
-        if cb_rva < 0:
-          print(f"Warning: Invalid RVA calculated: {cb_rva}")
-          break
-
         # Convert RVA to file offset
         try:
           cb_offset = pe.get_offset_from_rva(cb_rva)
         except Exception as rva_error:
-          print(f"Error converting RVA to offset: {rva_error}")
+          print(f"Error converting callback RVA to file offset: {rva_error}")
           break
 
-        # Read pointer-sized data from file
-        try:
-          callback_addr_bytes = pe.get_data(cb_offset, ptr_size)
-          callback_addr = int.from_bytes(callback_addr_bytes, byteorder='little')
-        except Exception as read_error:
-          print(f"Error reading callback address: {read_error}")
+        # Ensure offset within file
+        data_len = len(getattr(pe, '__data__', b''))
+        if cb_offset is None or cb_offset < 0 or cb_offset >= data_len:
+          print(f"Callback offset {cb_offset} out of range (file size {data_len})")
           break
 
-        # Check if we've reached the end (NULL pointer)
+        # Read pointer-sized data from file at cb_offset
+        ptr_bytes = pe.get_data(cb_offset, ptr_size)
+        if not ptr_bytes or len(ptr_bytes) < ptr_size:
+          print(f"Failed to read pointer at offset {cb_offset}")
+          break
+
+        callback_addr = int.from_bytes(ptr_bytes, byteorder='little')
+        # Null-terminated list: stop on 0
         if callback_addr == 0:
-            break
-            
-        callbacks.append(hex(callback_addr))
+          break
+
+        cb_info = {'address': callback_addr}
+
+        # Try to read some bytes of the callback code (first 128 bytes) if it maps into the file
+        if imagebase and size_of_image and callback_addr >= imagebase and callback_addr < imagebase + size_of_image:
+          cb_code_rva = callback_addr - imagebase
+          try:
+            code_offset = pe.get_offset_from_rva(cb_code_rva)
+            max_read = min(128, data_len - code_offset)
+            if max_read > 0:
+              code_bytes = pe.get_data(code_offset, max_read)
+              cb_info['data'] = code_bytes
+              cb_info['hex'] = code_bytes.hex()
+          except Exception as code_err:
+            # Non-fatal: include error info but continue
+            cb_info['data_error'] = str(code_err)
+
+        callbacks.append(cb_info)
         print(f"TLS Callback #{len(callbacks)}: 0x{callback_addr:x}")
-        
-        # Move to next pointer
-        cb_ptr += ptr_size
-          
+
+        # Advance to next pointer in the callback array
+        cb_rva += ptr_size
+
       except Exception as e:
         print(f"Error reading TLS callback: {e}", file=sys.stderr)
         break
-      
+
     if not callbacks:
       print("No TLS callbacks found")
       return None
-          
+
     print(f"Total TLS callbacks found: {len(callbacks)}")
     return callbacks
-    
+
   except Exception as e:
     print(f"Error in get_tls_callbacks: {e}", file=sys.stderr)
     return None
@@ -370,17 +414,9 @@ def get_reloc_data(pe: pefile.PE):
     print(f"Error in get_reloc_data: {e}", file=sys.stderr)
     return None
 
-def main():
-  print("In main")
-  if len(sys.argv) < 2:
-    print("Usage: python peanalyzer.py <pe_file_path>", file=sys.stderr)
-    print("No arguments provided, exiting.", file=sys.stderr)
-    sys.exit(1)
-  
-  pe_files = []
-  pe_file_path = sys.argv[1]
+def get_pe_info(pe_file_path: str):
   print(f"Analyzing file: {pe_file_path}")
-  
+
   try:
     # Check if file exists
     if not os.path.exists(pe_file_path):
@@ -389,9 +425,7 @@ def main():
     
     # Try to parse the PE file
     pe_file = pefile.PE(pe_file_path)
-    pe_files.append(pe_file)
     print("PE file loaded successfully.")
-    
   except pefile.PEFormatError as e:
     print(f"Error: Invalid PE file format - {e}", file=sys.stderr)
     sys.exit(1)
@@ -403,42 +437,50 @@ def main():
     sys.exit(1)
 
   try:
-    info = get_sections_info(pe_files[0])
+    info = get_sections_info(pe_file)
     print("Section info:", info)
   except Exception as e:
     print(f"Error getting section info: {e}", file=sys.stderr)
 
   try:
-    stub = get_stub(pe_files[0])
+    stub = get_stub(pe_file)
     print("Stub data retrieved successfully")
   except Exception as e:
     print(f"Error getting stub: {e}", file=sys.stderr)
     
   try:
-    timestamp = get_timedatestamp(pe_files[0])
+    timestamp = get_timedatestamp(pe_file)
     print(f"Timestamp: {timestamp}")
   except Exception as e:
     print(f"Error getting timestamp: {e}", file=sys.stderr)
     
   try:
-    imps = get_imports(pe_files[0])
+    imps = get_imports(pe_file)
     print("Imports retrieved successfully")
   except Exception as e:
     print(f"Error getting imports: {e}", file=sys.stderr)
     
   try:
-    exps = get_exports(pe_files[0])
+    exps = get_exports(pe_file)
     print("Exports retrieved successfully")
   except Exception as e:
     print(f"Error getting exports: {e}", file=sys.stderr)
 
-  ## TODO: EXPAND AND ENUMERATE THROUGH ALL RESOURCES IN RESOURCE DIR
-  # resource_strings = pe_files[0].get_resources_strings()
-  # print(str(resource_strings))
+  try:
+    if hasattr(pe_file, 'get_resources_strings'):
+      resource_strings = pe_file.get_resources_strings()
+      if resource_strings:
+        print(f"Resource strings found: {len(resource_strings)} entries")
+      else:
+        print("No resource strings found")
+    else:
+      print("pefile does not support get_resources_strings() in this version")
+  except Exception as e:
+    print(f"Error getting resource strings: {e}", file=sys.stderr)
 
   # Get overlay if any, and print
   try:
-    overlay = pe_files[0].get_overlay()
+    overlay = pe_file.get_overlay()
     if overlay:
       print(f"Overlay found: {len(overlay)} bytes")
     else:
@@ -447,7 +489,7 @@ def main():
     print(f"Error getting overlay: {e}", file=sys.stderr)
 
   try:
-    callbacks = get_tls_callbacks(pe_files[0])
+    callbacks = get_tls_callbacks(pe_file)
     if callbacks:
       print(f"TLS callbacks: {callbacks}")
     else:
@@ -456,7 +498,7 @@ def main():
     print(f"Error getting TLS callbacks: {e}", file=sys.stderr)
 
   try:
-    del_imports = get_delay_imports(pe_files[0])
+    del_imports = get_delay_imports(pe_file)
     if del_imports:
       print("Delay imports retrieved successfully")
     else:
@@ -465,7 +507,7 @@ def main():
     print(f"Error getting delay imports: {e}", file=sys.stderr)
 
   try:
-    reloc_data = get_reloc_data(pe_files[0])
+    reloc_data = get_reloc_data(pe_file)
     if reloc_data:
       print(f"Relocation data: {len(reloc_data)} entries")
     else:
@@ -473,8 +515,18 @@ def main():
   except Exception as e:
     print(f"Error getting relocation data: {e}", file=sys.stderr)
 
-  # pe_files[0].print_info()
 
+def main():
+  parser = argparse.ArgumentParser(prog='peanalyzer', 
+                                   description="Analyze a PE for various items of interest.")
+
+  parser.add_argument('path', help='Path to the PE file to analyze')
+  parser.add_argument('--csv', action='store_true', help='Output CSV')
+
+  args = parser.parse_args()
+  pe_file_path = args.path
+  get_pe_info(pe_file_path)
+  
 if __name__ == "__main__":
   main()
 
